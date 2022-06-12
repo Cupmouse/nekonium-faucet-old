@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet"
+          href="https://unpkg.com/purecss@1.0.0/build/pure-min.css"
+          integrity="sha384-nn4HPE8lTHyVtfCBi5yW9d20FjT8BJwUXyWZT9InLYax14RDjBj46LmSztkmNP9w"
+          crossorigin="anonymous">
+
+    <title>ねこの水飲み場 - Nekonium Faucet</title>
+
+    <style>
+        body {
+            font-size: 1.2em;
+        }
+        * {
+            font-family: sans-serif;
+        }
+
+        a {
+            color: inherit;
+        }
+
+        header {
+            text-align: center;
+        }
+
+        .main-content {
+            margin: 10%;
+            text-align: center;
+        }
+
+        .faucet-form {
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .address-textbox {
+            text-align: center;
+            width: 100%;
+        }
+
+        .g-recaptcha {
+            display: inline-block;
+        }
+
+        #hidden-box {
+            visibility: hidden;
+            opacity: 0;
+
+            transition: all 500ms 0s ease;
+        }
+
+        .info-block {
+            margin: 5%;
+        }
+
+        footer {
+            width: 100%;
+            overflow: hidden;
+            padding-right: 7%;
+
+            text-align: right;
+            color: #BBB;
+        }
+    </style>
+
+    <script src='https://www.google.com/recaptcha/api.js'></script>
+    <script src='./js/velocity.min.js'></script>
+    <script src='./js/bignumber.min.js'></script>
+    <script type="application/javascript">
+
+        const one_nuko = new BigNumber('1e18');
+        const reg = /^0x[a-fA-F\d]{40}$/;
+        const block_explorer_prefix = "http://nukoexplorer.oldbeyond.com/tx/";
+
+        var recaptchaChecked = false;
+        var processing = false;
+
+        document.addEventListener("DOMContentLoaded", onContentLoaded, false);
+
+        function onContentLoaded() {
+            // submitボタンが押された時のイベントを登録する
+            document.getElementById("faucet-form").addEventListener("submit", submitForm, false);
+            // アドレス入力バーに何か入力されるたびにチェックする 2回実行されるけど許して
+            document.getElementById("address").addEventListener("keyup", validateAddress, false);
+            document.getElementById("address").addEventListener("input", validateAddress, false);
+            getNewFaucetInfo();
+        }
+
+        function getNewFaucetInfo() {
+            // ajaxで水位と履歴を取得し、ページに適用する
+            var req = new XMLHttpRequest();
+
+            req.onreadystatechange = function() {
+                if (req.readyState === 4 && req.status === 200) {
+                    // 正常に取得された時
+
+                    var parsed = JSON.parse(req.responseText);
+
+                    var amount = new BigNumber(parsed['b'][0]);
+                    var remaining = new BigNumber(parsed['b'][1]);
+
+                    amount = amount.div(one_nuko).round(2);
+                    remaining = remaining.div(one_nuko).round(2);
+
+                    document.getElementById("text-receive-amount").textContent = amount.toString();
+                    document.getElementById("text-faucet-remaining").textContent = remaining.toString();
+                    document.getElementById("text-faucet-address").textContent = parsed['b'][2];
+
+                    if (amount.lessThanOrEqualTo(0)) {
+                        // 水飲み場が干上がっている
+
+                        document.getElementById("address").disabled = true;
+                    }
+                }
+            };
+
+            req.open("GET", "info.php", true);
+            req.send(null);
+        }
+
+        function validateAddress() {
+            // 正常なアドレスが入力されているか確認
+            if (reg.test(document.getElementById("address").value)) {
+                // アドレスが入力されたら秘伝ボックスを開封する
+                showBox();
+            } else {
+                hideBox();
+            }
+        }
+
+        function submitForm(event) {
+            if (processing) {
+                event.preventDefault();
+                return;
+            }
+
+            // ロボット認証を通過しているか確認
+            if (!recaptchaChecked) {
+                // 起きないはずだけど
+                document.getElementById("text-enter-address").textContent = "チェックボックスにチェックを付けて下さい";
+                event.preventDefault();
+                return;
+            }
+
+            processing = true;
+
+            disableButton();
+            hideBox();
+            document.getElementById("address").disabled = true;
+
+            var req = new XMLHttpRequest();
+
+            var t_res = document.getElementById("text-result");
+            t_res.textContent = "少々お待ちください...";
+
+            req.onreadystatechange = function() {
+                if (req.readyState === 4) {
+
+                    if (req.status === 200) {
+                        // 返事あり
+                        t_res.textContent = req.responseText;
+                        var parsed = JSON.parse(req.responseText);
+
+                        if (parsed['s'] === true) {
+                            // エラーなし
+
+                            amount = new BigNumber(parsed['amount']).div(one_nuko).round(2);
+
+                            t_res.style.color = "blue";
+                            t_res.innerHTML = amount + 'NUKO 送金されました😺 <a href="' + block_explorer_prefix + parsed['tx'] + '">トランザクションの確認は、ここをクリック</a>';
+                            // 新しい残高に更新する
+                            getNewFaucetInfo();
+                        } else {
+                            // エラーあり
+
+                            t_res.style.color = "red";
+                            switch (parsed['c']) {
+                                case 11:
+                                    // ロボットチェックがなってない
+                                    t_res.textContent = "肉球チェックに失敗しました。ページを再読込みして、もう一度やり直して下さい。\nCaptcha failed. Please reload and try again.";
+                                    break;
+                                case 102:
+                                    // 短期間に更に受け取ろうとした
+                                    t_res.textContent = "3時間経過していません。最後の受け取りは、UTC(協定世界時)" + parsed['t'] + "です。お待ち下さい。\nYou have to wait 3 hours to get more nuko, last time you get is the time above.";
+                                    break;
+                                case 300:
+                                    // コインの扱い時のエラーは詳細も含まれる
+                                    t_res.textContent = "エラー" + parsed['c'] + "が発生しました" + "/" + parsed['d'] + "\nSome error occurred.";
+                                    break;
+                                case 401:
+                                    // データベース関連エラー()
+                                    t_res.textContent = "データベース関連エラーです。管理人に報告して下さい。\nDatabase error occurred, please contact to the faucet dev: discord @かばやき";
+                                    break;
+                                default:
+                                    t_res.textContent = "エラー" + parsed['c'] + "が発生しました";
+                                    break;
+                            }
+                        }
+                    } else {
+                        // 返事なし
+                        t_res.style.color = "red";
+                        t_res.textContent = "何かが詰まっていて水が出てきませんでした😿"
+                    }
+                }
+            };
+
+            req.open("POST", "confirm.php", true);
+
+            // POSTするデータを整理
+            var formdata = new FormData();
+            formdata.append("t", grecaptcha.getResponse());
+            formdata.append("a", document.getElementById("address").value);
+            // POST
+            req.send(formdata);
+
+            event.preventDefault();
+        }
+
+        function hideBox() {
+            var hidbox = document.getElementById("hidden-box");
+
+            if (hidbox.style.visibility !== "hidden") {
+                hidbox.style.visibility = "hidden";
+                hidbox.style.opacity = "0";
+            }
+        }
+
+        function showBox() {
+            if (!processing) {
+                var hidbox = document.getElementById("hidden-box");
+
+                if (hidbox.style.visibility !== "visible") {
+                    hidbox.style.visibility = "visible";
+                    hidbox.style.opacity = "100";
+                }
+            }
+        }
+
+        function disableButton() {
+            document.getElementById("submit-button").disabled = false;
+        }
+
+        function enableButton() {
+            if (!processing) {
+                document.getElementById("submit-button").disabled = false;
+            }
+        }
+
+        function recaptchaActive() {
+            recaptchaChecked = true;
+            disableButton();
+        }
+
+        function recaptchaUnready() {
+            recaptchaChecked = false;
+            enableButton();
+        }
+    </script>
+</head>
+<body>
+<div class="pure-g wrapper">
+    <header class="pure-u-1">
+        <h1>ねこの水飲み場</h1>
+    </header>
+    <div class="pure-u-1 main-content">
+        <!--<p>This faucet is for experimental purposes such as a contract development, it is not a money printer!</p>-->
+        <form id="faucet-form" class="pure-form pure-form-stacked">
+            <p><label><span id="text-enter-address">受け取るNekoniumアドレスを入力して下さい</span></label></p>
+            <input type="text"
+                   id="address"
+                   class="address-textbox"
+                   pattern="^0x[a-fA-F\d]{40}$"
+                   placeholder="Enter your Nekonium address here"
+                   maxlength="42"
+                   autofocus required>
+
+            <div id="hidden-box">
+                <p><label>肉球🐾チェックです　チェックを入れて下さい</label></p>
+                <p><div class="g-recaptcha" data-sitekey="6Le8ICoUAAAAAKZJbSthZ3NznpCcZ2k1IBZT9YO2" data-callback="recaptchaActive" expired-callback="recaptchaUnready"></div></p>
+
+                <p><button id="submit-button" type="submit" class="pure-button pure-button-primary" disabled>受け取り Claim</button></p>
+            </div>
+        </form>
+        <p><span id="text-result"></span></p>
+    </div>
+    <div class="pure-u-1 info-block">
+        <p>予想受け取り量:<span id="text-receive-amount">?</span> NUKO</p>
+        <p>タンクの水位:<span id="text-faucet-remaining">?</span> NUKO</p>
+        <p>貯水は右へNekoniumを送信:<span id="text-faucet-address">?</span></p>
+    </div>
+    <footer class="pure-u-1">
+        <p>同一人物が受け取れるのは3時間に1回です。アドレスを変更したり、IPを変えたりして3時間で複数回受け取りを行った場合、然るべき処置を取ります。</p>
+        <p>受け取りボタンをクリックした事により、IPアドレスとNekoniumアドレスがデータベースに登録され、誰でも観覧可能になることに同意したと見なします。</p>
+        <p>次のライセンスが適用されたライブラリを使用しています: <a href="https://github.com/MikeMcl/bignumber.js/blob/master/LICENCE">MIT Licence</a></p>
+        <p>運営者個人への寄付をお願いします。アドレスは0xFBB16522Ea887cE50Af3248f41EEF763A33FC3F0です。</p>
+    </footer>
+</div>
+</body>
+</html>

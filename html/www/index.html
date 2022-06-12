@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet"
+          href="https://unpkg.com/purecss@1.0.0/build/pure-min.css"
+          integrity="sha384-nn4HPE8lTHyVtfCBi5yW9d20FjT8BJwUXyWZT9InLYax14RDjBj46LmSztkmNP9w"
+          crossorigin="anonymous">
+    <script src="./js/socket.io.js"></script>
+    <script src="./js/bignumber.min.js"></script>
+
+    <title>Nekonium Dashboard</title>
+    <style>
+        .span-hex-highlight {
+            background-color: red;
+            color: white;
+        }
+        h1 {
+            text-align: center;
+        }
+
+        #recent-blocks {
+            /*overflow: scroll;*/
+        }
+
+        .block {
+            margin: 1.3em 0;
+        }
+
+        .block-info {
+            width: 50%;
+            margin: 0 auto;
+        }
+
+        .block-number {
+            font-size: 1.25em;
+        }
+
+        .block-transaction-number {
+            font-size: 1.15em;
+        }
+
+        .block-transactions {
+            text-align: center;
+        }
+
+        .block-transactions-table {
+            border: none;
+            margin: 0 auto;
+        }
+        .block-transactions-table td,
+        .block-transactions-table th{
+            border: none;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+<script type="application/javascript">
+    const one_nuko = new BigNumber('1e18');
+    // マルチな環境に対応しなければいけないらしい
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const textAnimation = function (selector, hex, startPos, endPos) {
+        startPos += 2;
+        endPos += 2;
+
+        document.querySelector(selector).innerHTML = hex.substr(0, startPos)
+            + '<span class="span-hex-highlight">' + hex.substr(startPos, endPos - startPos + 1) + '</span>'
+            + hex.substr(endPos + 1);
+    };
+    const normalText = function (selector, hex) {
+        document.querySelector(selector).innerHTML = hex;
+    };
+
+    // そのままだと音が大きすぎるので小さくする用
+    let volume = 0.1;
+
+    let pendingHexes = [];
+    let interval = 210; // ms !
+    let player;
+
+    function AudioPlayer(freqArray, updater, callbackFinished) {
+        this.freqArray = freqArray;
+        this.updater = updater;
+        this.callbackFinished = callbackFinished;
+
+        this.isPlaying = false;
+        this.pos = 0;
+    }
+
+    AudioPlayer.prototype.soundDuration = 0.7; // sec!
+
+    AudioPlayer.prototype.play = function () {
+        if (this.isPlaying) {
+            throw Error('I AM PLAYING!');
+        }
+
+        // この関数を呼ぶと勝手に動き始めてfreqArrayを全部回ると止まる
+        this.isPlaying = true;
+        this.playNextNotes();
+    };
+
+    AudioPlayer.prototype.playNextNotes = function () {
+        let startPos = this.pos;
+        let count = parseInt(Math.random() * 4) + 1;
+
+        // 指定された同時に鳴らす回数が、freqArrayの残りより大きい場合は、今回の関数呼び出しで最後、これ以上呼ばれない
+        if (this.pos + count >= this.freqArray.length) {
+            count = this.freqArray.length - this.pos;
+
+            let self = this;
+            // 音がなり終わったらisPlayingをfalseに
+            setTimeout(function () {
+                self.isPlaying = false;
+
+                if (self.callbackFinished !== null) {
+                    // コールバック呼ぶ
+                    self.callbackFinished();
+                }
+            }, interval)
+        } else {
+            // 基本は200msで1Tickだが、面白くないのでバラけさせる
+            let offset = 0;
+//            let offset = (1000 * (2 * Math.random() - 1)) / 20;
+
+            // 次にある期間後この関数が実行されるように設定する
+            let self = this;
+            setTimeout(function () {
+                self.playNextNotes();
+            }, interval + offset);
+//            }, 1000);
+        }
+
+        for (let i = 0; i < count; i++) {
+            // 0Hzは無視
+            if (this.freqArray[this.pos] === 0)
+                continue;
+
+            let sound = createSinWaveNode(this.freqArray[this.pos], this.soundDuration);
+            sound.start(audioCtx.currentTime);
+            // soundDuration秒以内でフェードアウトしているはずなので止める
+            sound.stop(audioCtx.currentTime + this.soundDuration);
+
+            this.pos++;
+        }
+
+        // コールバック関数を呼ぶ
+        this.updater(startPos, this.pos - 1);
+    };
+
+    function hexHashToFrequencyArray(hash) {
+        let charArray = [...hash.substr(2)];
+        let freqArray = [];
+
+        for (let i = 0; i < hash.length; i++) {
+            switch (charArray[i]) {
+                case '0': freqArray[i] = 264; break;
+                case '1': freqArray[i] = 264; break;
+                case '2': freqArray[i] = 307; break;
+                case '3': freqArray[i] = 307; break;
+                case '4': freqArray[i] = 351; break;
+                case '5': freqArray[i] = 351; break;
+                case '6': freqArray[i] = 441; break;
+                case '7': freqArray[i] = 527; break;
+                case '8': freqArray[i] = 617; break;
+                case '9': freqArray[i] = 703; break;
+                case 'A':
+                case 'a': freqArray[i] = 879; break;
+                case 'B':
+                case 'b': freqArray[i] = 1057; break;
+                case 'C':
+                case 'c': freqArray[i] = 1233; break;
+                case 'D':
+                case 'd': freqArray[i] = 1406; break;
+                case 'E':
+                case 'e': freqArray[i] = 1759; break;
+                case 'F':
+                case 'f': freqArray[i] = 2107; break;
+            }
+        }
+
+        return freqArray;
+    }
+
+    // 一つの音を管理するNodeを作る
+    function createSinWaveNode(hertz, soundDuration) {
+        // OscillatorNodeとGainNodeをつくる
+        let oscNode = audioCtx.createOscillator();
+        let gainNode = audioCtx.createGain();
+
+        // 直前にGainが1になり、0.7秒かけて直線的にGainが0になる（フェードアウト）
+        gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + soundDuration);
+
+        // Sine wave
+        oscNode.type = 'sine';
+        oscNode.frequency.value = hertz;
+
+        // 最後にゲイン調整ができるよう設定し、スピーカーと接続する(?)
+        oscNode.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        return oscNode;
+    }
+
+    function playHex(hex, updater, callbackFinished) {
+        let freqArray = hexHashToFrequencyArray(hex);
+
+        player = new AudioPlayer(freqArray, updater, callbackFinished);
+        player.play();
+    }
+    
+    function tryToPlayNext() {
+        if (pendingHexes.length > 0 && (player === undefined || !player.isPlaying)) {
+            let hex = pendingHexes[0][0];
+            let id = pendingHexes[0][1];
+
+            // 現在再生可能
+            playHex(hex, function (startPos, endPos) {
+                textAnimation(id, hex, startPos, endPos);
+            }, function () {
+                tryToPlayNext();
+                normalText(id, hex);
+            });
+
+            // 要素の先頭を削除する
+            pendingHexes.shift();
+        }
+
+        // その他無視
+    }
+
+    function pendNewHex(hex, selector) {
+        normalText(selector, hex);
+
+        let nextIndex = pendingHexes.length;
+
+        pendingHexes[nextIndex] = new Array(2);
+        pendingHexes[nextIndex][0] = hex;
+        pendingHexes[nextIndex][1] = selector;
+
+        tryToPlayNext();
+    }
+
+//    let socket = io.connect('ws://localhost:8080');
+    let socket = io.connect('ws://www.nekonium.net:8080');
+
+    // 今のところ使わない
+    function recalculateInterval() {
+        if (pendingHexes.length > 2) {
+            interval = 210 * (10/(10 + parseInt(pendingHexes.length / 2 - 1) * 4));
+        } else {
+            interval = 210;
+        }
+    }
+
+    socket.on('new_block', function (data) {
+        let recentBlocksDiv = document.getElementById('recent-blocks');
+
+//        let duplicateFlag;
+//
+//        // すでに同じブロック用にDivが存在しているか確認し、あるならフラッグ立てておく
+//        let blockDiv = document.getElementById('block-' + data.number);
+//
+//        if (blockDiv !== undefined) {
+//            duplicateFlag = true;
+//        }
+
+        // 指定番号Blockの情報を記入するDIV作成、ハッシュレートがDiffに比べて高い場合同じブロックNOのブロックが流れてくること
+        // があるので、その対応としてランダムなプレフィックスをつける
+        let id = 'block-' + data.number + '-' + parseInt(Math.random() * 100000);
+        recentBlocksDiv.innerHTML = '<div id="' + id + '" class="pure-u-1 block"></div>' + recentBlocksDiv.innerHTML;
+
+        // 作ったやつを取得
+        blockDiv = document.getElementById(id);
+        // block-info Divを作成
+        blockDiv.innerHTML = '<div class="pure-g block-info"></div>';
+        let blockInfoDiv = recentBlocksDiv.getElementsByClassName('block-info')[0];
+
+        // block-infoの中にBlockの情報を書き込み
+        blockInfoDiv.innerHTML += '<div class="pure-u-1">Block #<span class="block-number">' + data.number.toString() + '</span></div>';
+        blockInfoDiv.innerHTML += '<div class="pure-u-1"><span class="block-hash">' + data.hash + '</span></div>';
+        blockInfoDiv.innerHTML += '<div class="pure-u-1-6">Miner</div><div class="pure-u-5-6"><span class="block-miner">' + data.miner + '</span></div>';
+        blockInfoDiv.innerHTML += '<div class="pure-u-1"><span class="block-transaction-number">' + data.transactions.length.toString() + '</span> transactions</div>';
+
+        // Block DivにトランザクションリストのDivづくり
+        blockDiv.innerHTML += '<div class="block-transactions"></div>';
+
+        // トランザクションのテーブルHTML作り
+
+        let tableHTML = '<table class="pure-table block-transactions-table">';
+
+        for (let i = 0; i < data.transactions.length; i++) {
+            let value = new BigNumber(data.transactions[i].value);
+
+            value = value.div(one_nuko).round(2);
+
+            tableHTML += '<tr>';
+            tableHTML += '<td class="block-transactions-from">' + data.transactions[i].from + '</td>';
+            tableHTML += '<td>▶' + value + '▶</td>';
+            tableHTML += '<td class="block-transactions-to">' + data.transactions[i].to + '</td>';
+            tableHTML += '</tr>';
+        }
+
+        tableHTML += '</table>';
+
+        // テーブル記入する
+        blockDiv.getElementsByClassName('block-transactions')[0].innerHTML = tableHTML;
+
+        // 音鳴らし順番待ちする
+        pendNewHex(data.hash, '#' + id + ' .block-hash');
+        pendNewHex(data.miner, '#' + id + ' .block-miner');
+//    }
+    });
+
+</script>
+<header><h1>Nekonium Dashboard</h1></header>
+<div id="recent-blocks" class="pure-g">
+</div>
+<span id="update" style="opacity: 0.5"></span>
+</body>
+</html>
